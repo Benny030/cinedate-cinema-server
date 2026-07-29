@@ -120,6 +120,13 @@ function parseSessions(film) {
     });
 }
 
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "cinedate-cinema-server"
+  });
+});
+
 // ─── GET /cinemas — lista cinema ─────────────────────────────────────────────
 app.get('/cinemas', (req, res) => {
   res.json(CINEMAS);
