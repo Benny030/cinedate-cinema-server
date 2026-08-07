@@ -199,145 +199,43 @@ const CINEMAS = [
   },];
 
 
- 
 // ─── Playwright fetch con cache ───────────────────────────────────────────────
 async function fetchTheSpace(url) {
   const cached = cache.get(url);
-
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    console.log('🟢 CACHE HIT:', url);
     return cached.data;
   }
 
-  console.log('🌐 FETCH THE SPACE:', url);
-
   const browser = await chromium.launch({
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-    ],
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
   });
 
   try {
     const context = await browser.newContext({
       locale: 'it-IT',
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
     });
 
     const page = await context.newPage();
-
-    await page.goto('https://www.thespacecinema.it/', {
-      waitUntil: 'networkidle',
-      timeout: 30000,
-    });
-
+    await page.goto('https://www.thespacecinema.it/', { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(async (apiUrl) => {
       const res = await fetch(apiUrl, {
-        method: 'GET',
         credentials: 'include',
-        headers: {
-          Accept: 'application/json, text/plain, */*',
-          Referer: 'https://www.thespacecinema.it/',
-        },
+        headers: { 'Accept': 'application/json', 'Referer': 'https://www.thespacecinema.it/' },
       });
-
-      const text = await res.text();
-
-      if (!res.ok) {
-        throw new Error(
-          `The Space HTTP ${res.status}: ${text.substring(0, 500)}`
-        );
-      }
-
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(
-          `The Space returned non-JSON response: ${text.substring(0, 500)}`
-        );
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
     }, url);
 
-    console.log('📦 THE SPACE RESPONSE TYPE:', typeof result);
-    console.log(
-      '📦 THE SPACE IS ARRAY:',
-      Array.isArray(result)
-    );
-
-    if (Array.isArray(result)) {
-      console.log(
-        '📦 THE SPACE ARRAY LENGTH:',
-        result.length
-      );
-    } else if (result && typeof result === 'object') {
-      console.log(
-        '📦 THE SPACE KEYS:',
-        Object.keys(result)
-      );
-    }
-
-    cache.set(url, {
-      data: result,
-      ts: Date.now(),
-    });
-
+    cache.set(url, { data: result, ts: Date.now() });
     return result;
   } finally {
     await browser.close();
   }
 }
- 
- 
-// ─── Estrae l'array film dalla risposta The Space ─────────────────────────────
-function extractFilms(response) {
-  if (Array.isArray(response)) {
-    return response;
-  }
-
-  if (!response || typeof response !== 'object') {
-    return [];
-  }
-
-  // Formati possibili
-  const candidates = [
-    response.result,
-    response.films,
-    response.data,
-    response.items,
-    response.results,
-  ];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate;
-    }
-  }
-
-  // Alcune API annidano il risultato
-  if (response.result && typeof response.result === 'object') {
-    const nested = [
-      response.result.films,
-      response.result.data,
-      response.result.items,
-      response.result.results,
-    ];
-
-    for (const candidate of nested) {
-      if (Array.isArray(candidate)) {
-        return candidate;
-      }
-    }
-  }
-
-  return [];
-}
- 
-
 
 // ─── Distanza in km ───────────────────────────────────────────────────────────
 function getDistanceKm(lat1, lng1, lat2, lng2) {
@@ -369,96 +267,26 @@ function titlesMatch(a, b) {
   return wordsA.filter(w => wordsB.includes(w)).length >= Math.min(2, wordsA.length, wordsB.length);
 }
 
- 
 // ─── Normalizza sessioni da risposta The Space ────────────────────────────────
 function parseSessions(film) {
-  if (!film || typeof film !== 'object') {
-    return [];
-  }
+  const rawGroups = film.showingGroups ?? film.sessions ?? film.showings ?? [];
+  const groups = Array.isArray(rawGroups) ? rawGroups : [];
 
-  const rawGroups =
-    film.showingGroups ??
-    film.sessions ??
-    film.showings ??
-    [];
-
-  let sessions = [];
-
-  if (Array.isArray(rawGroups)) {
-    for (const group of rawGroups) {
-      if (Array.isArray(group?.sessions)) {
-        sessions.push(...group.sessions);
-      } else if (Array.isArray(group?.showings)) {
-        sessions.push(...group.showings);
-      } else if (
-        group &&
-        typeof group === 'object' &&
-        (
-          group.startTime ||
-          group.showingTime ||
-          group.time
-        )
-      ) {
-        sessions.push(group);
-      }
-    }
-  }
-
-  return sessions
-    .map((s) => {
-      const rawTime =
-        s?.startTime ??
-        s?.showingTime ??
-        s?.time ??
-        '';
-
-      let time = rawTime;
-
-      if (
-        typeof rawTime === 'string' &&
-        rawTime.length >= 16 &&
-        rawTime.includes('T')
-      ) {
-        time = rawTime.substring(11, 16);
-      }
-
-      const bookingUrl =
-        s?.bookingUrl?.startsWith('http')
-          ? s.bookingUrl
-          : `https://www.thespacecinema.it${
-              s?.bookingUrl ?? ''
-            }`;
-
+  return groups
+    .flatMap(g => Array.isArray(g.sessions) ? g.sessions : Array.isArray(g.showings) ? g.showings : [])
+    .map(s => {
+      const rawTime = s.startTime ?? s.showingTime ?? s.time ?? '';
       return {
-        id: String(
-          s?.sessionId ??
-          s?.id ??
-          ''
-        ),
-
-        time,
-
-        hall:
-          s?.screenName ??
-          s?.screen?.name ??
-          s?.hall?.name ??
-          null,
-
-        format:
-          Array.isArray(s?.attributes)
-            ? s.attributes
-                .map((a) => a?.name)
-                .filter(Boolean)
-                .join(', ')
-            : null,
-
-        bookingUrl,
+        id: String(s.sessionId ?? s.id ?? ''),
+        time: rawTime.length >= 16 ? rawTime.substring(11, 16) : rawTime,
+        hall: s.screenName ?? s.screen?.name ?? s.hall?.name ?? null,
+        format: Array.isArray(s.attributes) ? s.attributes.map(a => a.name).filter(Boolean).join(', ') : null,
+        bookingUrl: s.bookingUrl?.startsWith('http')
+          ? s.bookingUrl
+          : `https://www.thespacecinema.it${s.bookingUrl ?? ''}`,
       };
-    })
-    .filter((s) => s.time);
+    });
 }
- 
-
 
 app.get("/", (req, res) => {
   res.json({
@@ -489,183 +317,46 @@ app.get('/cinema/nearby', (req, res) => {
   res.json({ cinemas: nearby });
 });
 
- 
 // ─── GET /cinema/showtimes/:id — programmazione ───────────────────────────────
 app.get('/cinema/showtimes/:id', async (req, res) => {
   const cinemaId = Number(req.params.id);
-
-  if (!cinemaId) {
-    return res.status(400).json({
-      error: 'id non valido',
-    });
-  }
+  if (!cinemaId) return res.status(400).json({ error: 'id non valido' });
 
   try {
     const days = [];
 
     for (let i = 0; i < 7; i++) {
       const dateObj = new Date();
+      dateObj.setDate(dateObj.getDate() + i);
+      const dateKey = dateObj.toISOString().split('T')[0];
+      const showingDate = `${dateKey}T00:00:00`;
 
-      dateObj.setDate(
-        dateObj.getDate() + i
-      );
-
-      const dateKey =
-        dateObj.toISOString().split('T')[0];
-
-      const showingDate =
-        `${dateKey}T00:00:00`;
-
-      const url =
-        `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films` +
-        `?showingDate=${encodeURIComponent(showingDate)}` +
-        `&minEmbargoLevel=3` +
-        `&includesSession=true` +
-        `&includeSessionAttributes=true`;
-
-      console.log('');
-      console.log('════════════════════════════════════');
-      console.log('🎬 SHOWTIMES');
-      console.log('Cinema:', cinemaId);
-      console.log('Date:', dateKey);
-      console.log('URL:', url);
+      const url = `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films?showingDate=${showingDate}&minEmbargoLevel=3&includesSession=true&includeSessionAttributes=true`;
 
       try {
-        const response =
-          await fetchTheSpace(url);
+        const response = await fetchTheSpace(url);
+        const data = Array.isArray(response) ? response : (response?.result ?? response?.films ?? []);
 
-        console.log(
-          '📦 RAW RESPONSE TYPE:',
-          typeof response
-        );
+        const films = data.map(film => ({
+          id:        String(film.filmId ?? film.id ?? ''),
+          title:     film.filmTitle ?? film.title ?? film.name ?? 'Titolo sconosciuto',
+          posterUrl: film.posterImageSrc ?? film.posterUrl ?? film.imageUrl ?? null,
+          duration:  film.runningTime ? `${film.runningTime} min` : null,
+          sessions:  parseSessions(film),
+        }));
 
-        console.log(
-          '📦 RAW RESPONSE ARRAY:',
-          Array.isArray(response)
-        );
-
-        if (
-          response &&
-          typeof response === 'object' &&
-          !Array.isArray(response)
-        ) {
-          console.log(
-            '📦 RAW RESPONSE KEYS:',
-            Object.keys(response)
-          );
-        }
-
-        const data =
-          extractFilms(response);
-
-        console.log(
-          '🎞 FILMS EXTRACTED:',
-          data.length
-        );
-
-        if (data.length > 0) {
-          console.log(
-            '🎞 FIRST FILM:',
-            JSON.stringify(
-              data[0],
-              null,
-              2
-            ).substring(0, 5000)
-          );
-        }
-
-        const films = data.map((film) => {
-          const sessions =
-            parseSessions(film);
-
-          return {
-            id: String(
-              film?.filmId ??
-              film?.id ??
-              ''
-            ),
-
-            title:
-              film?.filmTitle ??
-              film?.title ??
-              film?.name ??
-              'Titolo sconosciuto',
-
-            posterUrl:
-              film?.posterImageSrc ??
-              film?.posterUrl ??
-              film?.imageUrl ??
-              null,
-
-            duration:
-              film?.runningTime
-                ? `${film.runningTime} min`
-                : null,
-
-            sessions,
-          };
-        });
-
-        console.log(
-          '🎞 FILM NORMALIZZATI:',
-          films.map((film) => ({
-            id: film.id,
-            title: film.title,
-            sessions: film.sessions.length,
-          }))
-        );
-
-        days.push({
-          date: dateKey,
-          films,
-        });
-
+        days.push({ date: dateKey, films });
       } catch (err) {
-        console.error(
-          `❌ ERRORE GIORNO ${dateKey}:`,
-          err?.message || err
-        );
-
-        days.push({
-          date: dateKey,
-          films: [],
-        });
+        console.error(`Errore giorno ${dateKey}:`, err.message);
+        days.push({ date: dateKey, films: [] });
       }
     }
 
-    console.log('');
-    console.log(
-      '🏁 SHOWTIMES FINALI:',
-      JSON.stringify(
-        days.map((day) => ({
-          date: day.date,
-          films: day.films.length,
-        })),
-        null,
-        2
-      )
-    );
-
-    return res.json({
-      cinemaId,
-      days,
-    });
-
+    res.json({ cinemaId, days });
   } catch (err) {
-    console.error(
-      '🔥 SHOWTIMES FATAL:',
-      err?.message || err
-    );
-
-    return res.status(500).json({
-      error:
-        err?.message ||
-        'Errore interno',
-    });
+    res.status(500).json({ error: err.message });
   }
 });
- 
-
 
 // ─── GET /cinema/check-film — film in sala vicino ────────────────────────────
 app.get('/cinema/check-film', async (req, res) => {
@@ -692,51 +383,8 @@ app.get('/cinema/check-film', async (req, res) => {
   await Promise.all(nearbyCinemas.map(async cinema => {
     try {
       const url = `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinema.id}/films?showingDate=${today}&minEmbargoLevel=3&includesSession=true`;
- 
-const response =
-  await fetchTheSpace(url);
-
-const data =
-  extractFilms(response);
-
-console.log(
-  '🎞 CHECK FILM:',
-  cinema.name,
-  'films:',
-  data.length
-);
-
-const match = data.find((f) =>
-  titlesMatch(
-    f?.filmTitle ??
-    f?.title ??
-    f?.name ??
-    '',
-    title
-  )
-);
-
-if (!match) return;
-
-const sessions =
-  parseSessions(match)
-    .map((s) => s.time)
-    .filter(Boolean)
-    .slice(0, 5);
-
-showings.push({
-  cinema: cinema.name,
-  cinemaId: cinema.id,
-  distanceKm:
-    Math.round(
-      cinema.distanceKm * 10
-    ) / 10,
-  sessions,
-  bookingUrl:
-    `https://www.thespacecinema.it/cinema/${cinema.slug}/acquisto-biglietti`,
-});
- 
-
+      const data = await fetchTheSpace(url);
+      if (!Array.isArray(data)) return;
 
       const match = data.find(f => titlesMatch(f.filmTitle ?? f.title ?? f.name ?? '', title));
       if (!match) return;
