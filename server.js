@@ -490,9 +490,15 @@ app.get('/cinema/nearby', (req, res) => {
 });
 
  
+ 
 // ─── GET /cinema/showtimes/:id — programmazione ───────────────────────────────
+
 app.get('/cinema/showtimes/:id', async (req, res) => {
   const cinemaId = Number(req.params.id);
+
+  console.log('');
+  console.log('🎬 SHOWTIMES REQUEST');
+  console.log('🏢 Cinema ID:', cinemaId);
 
   if (!cinemaId) {
     return res.status(400).json({
@@ -504,17 +510,35 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
     const days = [];
 
     for (let i = 0; i < 7; i++) {
+      // -----------------------------------------------------------
+      // DATA LOCALE ITALIA
+      // -----------------------------------------------------------
+
       const dateObj = new Date();
 
       dateObj.setDate(
         dateObj.getDate() + i
       );
 
+      const year = dateObj.getFullYear();
+
+      const month = String(
+        dateObj.getMonth() + 1
+      ).padStart(2, '0');
+
+      const day = String(
+        dateObj.getDate()
+      ).padStart(2, '0');
+
       const dateKey =
-        dateObj.toISOString().split('T')[0];
+        `${year}-${month}-${day}`;
 
       const showingDate =
         `${dateKey}T00:00:00`;
+
+      // -----------------------------------------------------------
+      // URL THE SPACE
+      // -----------------------------------------------------------
 
       const url =
         `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films` +
@@ -524,59 +548,184 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
         `&includeSessionAttributes=true`;
 
       console.log('');
-      console.log('════════════════════════════════════');
-      console.log('🎬 SHOWTIMES');
-      console.log('Cinema:', cinemaId);
-      console.log('Date:', dateKey);
-      console.log('URL:', url);
+      console.log('────────────────────────────────────');
+      console.log('📅 DATA:', dateKey);
+      console.log('🌐 URL:', url);
 
       try {
+        // ---------------------------------------------------------
+        // CHIAMATA THE SPACE
+        // ---------------------------------------------------------
+
         const response =
           await fetchTheSpace(url);
 
-        console.log(
-          '📦 RAW RESPONSE TYPE:',
-          typeof response
-        );
+        // ---------------------------------------------------------
+        // DEBUG RISPOSTA REALE
+        // ---------------------------------------------------------
 
         console.log(
-          '📦 RAW RESPONSE ARRAY:',
+          '📦 RESPONSE TYPE:',
           Array.isArray(response)
+            ? 'ARRAY'
+            : typeof response
         );
 
-        if (
-          response &&
-          typeof response === 'object' &&
-          !Array.isArray(response)
-        ) {
+        if (response && typeof response === 'object') {
           console.log(
-            '📦 RAW RESPONSE KEYS:',
+            '🔑 RESPONSE KEYS:',
             Object.keys(response)
           );
         }
 
-        const data =
-          extractFilms(response);
+        console.log(
+          '📦 RAW RESPONSE PREVIEW:',
+          JSON.stringify(response).substring(0, 3000)
+        );
+
+        // ---------------------------------------------------------
+        // ESTRAZIONE FILM
+        // ---------------------------------------------------------
+
+        let data = [];
+
+        if (Array.isArray(response)) {
+          data = response;
+        } else if (
+          Array.isArray(response?.result)
+        ) {
+          data = response.result;
+        } else if (
+          Array.isArray(response?.films)
+        ) {
+          data = response.films;
+        } else if (
+          Array.isArray(response?.data)
+        ) {
+          data = response.data;
+        } else if (
+          Array.isArray(response?.items)
+        ) {
+          data = response.items;
+        }
 
         console.log(
-          '🎞 FILMS EXTRACTED:',
+          '🎞 FILM RAW TROVATI:',
           data.length
         );
 
-        if (data.length > 0) {
-          console.log(
-            '🎞 FIRST FILM:',
-            JSON.stringify(
-              data[0],
-              null,
-              2
-            ).substring(0, 5000)
-          );
-        }
+        // ---------------------------------------------------------
+        // DEBUG TITOLI
+        // ---------------------------------------------------------
+
+        console.log(
+          '🎬 TITOLI RAW:',
+          data.map((film) => (
+            film?.filmTitle ??
+            film?.title ??
+            film?.name ??
+            'SENZA TITOLO'
+          ))
+        );
+
+        // ---------------------------------------------------------
+        // NORMALIZZAZIONE FILM
+        // ---------------------------------------------------------
 
         const films = data.map((film) => {
-          const sessions =
-            parseSessions(film);
+          const rawGroups =
+            film?.showingGroups ??
+            film?.sessions ??
+            film?.showings ??
+            [];
+
+          const groups =
+            Array.isArray(rawGroups)
+              ? rawGroups
+              : [];
+
+          const sessions = groups
+            .flatMap((group) => {
+              if (
+                Array.isArray(group?.sessions)
+              ) {
+                return group.sessions;
+              }
+
+              if (
+                Array.isArray(group?.showings)
+              ) {
+                return group.showings;
+              }
+
+              // Alcune risposte possono avere
+              // direttamente le sessioni.
+              if (
+                group?.startTime ||
+                group?.showingTime ||
+                group?.time
+              ) {
+                return [group];
+              }
+
+              return [];
+            })
+            .map((session) => {
+              const rawTime =
+                session?.startTime ??
+                session?.showingTime ??
+                session?.time ??
+                '';
+
+              let time = '';
+
+              if (
+                typeof rawTime === 'string'
+              ) {
+                if (rawTime.length >= 16) {
+                  time =
+                    rawTime.substring(11, 16);
+                } else {
+                  time = rawTime;
+                }
+              }
+
+              return {
+                id: String(
+                  session?.sessionId ??
+                  session?.id ??
+                  ''
+                ),
+
+                time,
+
+                hall:
+                  session?.screenName ??
+                  session?.screen?.name ??
+                  session?.hall?.name ??
+                  null,
+
+                format:
+                  Array.isArray(
+                    session?.attributes
+                  )
+                    ? session.attributes
+                        .map((a) => a?.name)
+                        .filter(Boolean)
+                        .join(', ')
+                    : null,
+
+                bookingUrl:
+                  typeof session?.bookingUrl === 'string'
+                    ? (
+                        session.bookingUrl.startsWith('http')
+                          ? session.bookingUrl
+                          : `https://www.thespacecinema.it${session.bookingUrl}`
+                      )
+                    : '',
+              };
+            })
+            .filter((session) => session.time);
 
           return {
             id: String(
@@ -607,7 +756,12 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
         });
 
         console.log(
-          '🎞 FILM NORMALIZZATI:',
+          '✅ FILM NORMALIZZATI:',
+          films.length
+        );
+
+        console.log(
+          '🎥 FILM:',
           films.map((film) => ({
             id: film.id,
             title: film.title,
@@ -615,15 +769,24 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
           }))
         );
 
+        // ---------------------------------------------------------
+        // RISULTATO GIORNO
+        // ---------------------------------------------------------
+
         days.push({
           date: dateKey,
           films,
         });
 
-      } catch (err) {
+      } catch (error) {
         console.error(
-          `❌ ERRORE GIORNO ${dateKey}:`,
-          err?.message || err
+          '❌ ERRORE THE SPACE:',
+          {
+            cinemaId,
+            date: dateKey,
+            message: error?.message,
+            stack: error?.stack,
+          }
         );
 
         days.push({
@@ -633,38 +796,69 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
       }
     }
 
+    // -------------------------------------------------------------
+    // SUMMARY
+    // -------------------------------------------------------------
+
     console.log('');
+    console.log('════════════════════════════════════');
+    console.log('🏁 SHOWTIMES COMPLETATO');
+    console.log('🏢 Cinema:', cinemaId);
+
     console.log(
-      '🏁 SHOWTIMES FINALI:',
-      JSON.stringify(
-        days.map((day) => ({
-          date: day.date,
-          films: day.films.length,
-        })),
-        null,
-        2
+      '📅 Giorni:',
+      days.length
+    );
+
+    console.log(
+      '🎬 Film totali:',
+      days.reduce(
+        (total, day) =>
+          total + day.films.length,
+        0
       )
     );
 
-    return res.json({
+    console.log(
+      '📊 SUMMARY:',
+      days.map((day) => ({
+        date: day.date,
+        films: day.films.length,
+      }))
+    );
+
+    console.log('════════════════════════════════════');
+    console.log('');
+
+    // -------------------------------------------------------------
+    // CACHE
+    // -------------------------------------------------------------
+
+    res.setHeader(
+      'Cache-Control',
+      's-maxage=1800, stale-while-revalidate'
+    );
+
+    return res.status(200).json({
       cinemaId,
       days,
     });
 
-  } catch (err) {
+  } catch (error) {
     console.error(
-      '🔥 SHOWTIMES FATAL:',
-      err?.message || err
+      '🔥 SHOWTIMES FATAL ERROR:',
+      error
     );
 
     return res.status(500).json({
       error:
-        err?.message ||
+        error?.message ??
         'Errore interno',
     });
   }
 });
  
+
 
 
  
