@@ -1,17 +1,34 @@
+ 
 import express from 'express';
 import cors from 'cors';
 import { chromium } from 'playwright';
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-// ─── Cache in memoria ─────────────────────────────────────────────────────────
-const cache = new Map();
+/* ============================================================================
+   CONFIG
+============================================================================ */
+
+const PORT = process.env.PORT || 4000;
+
+const THE_SPACE_BASE_URL = 'https://www.thespacecinema.it';
+
 const CACHE_TTL = 1000 * 60 * 20; // 20 minuti
 
+const PAGE_TIMEOUT = 15000;
+const API_TIMEOUT = 15000;
+
+const cache = new Map();
+
+/* ============================================================================
+   CINEMA
+============================================================================ */
+
 const CINEMAS = [
- // Emilia-Romagna
+  // Emilia-Romagna
   {
     id: 1013,
     name: 'The Space Parma Campus',
@@ -48,7 +65,7 @@ const CINEMAS = [
     address: 'Viale Parco de Medici 135',
     lat: 41.8078,
     lng: 12.3819,
-    slug: 'roma-parco-de-medici', 
+    slug: 'roma-parco-de-medici',
   },
   {
     id: 1021,
@@ -101,7 +118,6 @@ const CINEMAS = [
     lng: 10.9748,
     slug: 'verona',
   },
-
   {
     id: 1015,
     name: 'The Space Limena',
@@ -111,7 +127,6 @@ const CINEMAS = [
     lng: 11.8444,
     slug: 'limena',
   },
-
   {
     id: 1016,
     name: 'The Space Vicenza',
@@ -143,7 +158,6 @@ const CINEMAS = [
     lng: 14.2855,
     slug: 'napoli',
   },
-
   {
     id: 1010,
     name: 'The Space Salerno',
@@ -161,7 +175,7 @@ const CINEMAS = [
     city: 'Genova',
     address: 'Calata Gadda, Porto Antico',
     lat: 44.4106,
-    lng: 8.9270,
+    lng: 8.927,
     slug: 'genova',
   },
 
@@ -171,7 +185,7 @@ const CINEMAS = [
     name: 'The Space Trieste',
     city: 'Trieste',
     address: 'Via Luigi Negrelli 2',
-    lat: 45.6370,
+    lat: 45.637,
     lng: 13.7817,
     slug: 'trieste',
   },
@@ -196,104 +210,382 @@ const CINEMAS = [
     lat: 37.5839,
     lng: 14.9846,
     slug: 'belpasso',
-  },];
+  },
+];
 
+/* ============================================================================
+   PLAYWRIGHT - BROWSER CONDIVISO
+============================================================================ */
 
- 
-// ─── Playwright fetch con cache ───────────────────────────────────────────────
-async function fetchTheSpace(url) {
+let browser = null;
+let context = null;
+let page = null;
+
+let browserStarting = null;
+
+async function getBrowserPage() {
+  if (page && !page.isClosed()) {
+    return page;
+  }
+
+  if (browserStarting) {
+    return browserStarting;
+  }
+
+  browserStarting = (async () => {
+    console.log('🚀 Avvio Chromium...');
+
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    });
+
+    context = await browser.newContext({
+      locale: 'it-IT',
+      timezoneId: 'Europe/Rome',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+    });
+
+    page = await context.newPage();
+
+    page.setDefaultTimeout(API_TIMEOUT);
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT);
+
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') {
+        console.log('🌐 PAGE ERROR:', msg.text());
+      }
+    });
+
+    page.on('pageerror', (error) => {
+      console.log('🌐 PAGE EXCEPTION:', error.message);
+    });
+
+    console.log('✅ Chromium pronto');
+
+    return page;
+  })();
+
+  try {
+    return await browserStarting;
+  } finally {
+    browserStarting = null;
+  }
+}
+
+/* ============================================================================
+   CHIUSURA BROWSER
+============================================================================ */
+
+async function closeBrowser() {
+  try {
+    if (browser) {
+      console.log('🛑 Chiusura Chromium...');
+      await browser.close();
+    }
+  } catch (error) {
+    console.error('Errore chiusura browser:', error.message);
+  } finally {
+    browser = null;
+    context = null;
+    page = null;
+  }
+}
+
+process.on('SIGTERM', async () => {
+  console.log('⚠️ SIGTERM ricevuto');
+  await closeBrowser();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('⚠️ SIGINT ricevuto');
+  await closeBrowser();
+  process.exit(0);
+});
+
+/* ============================================================================
+   CACHE
+============================================================================ */
+
+function getCached(url) {
   const cached = cache.get(url);
 
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - cached.ts >= CACHE_TTL) {
+    cache.delete(url);
+    return null;
+  }
+
+  return cached.data;
+}
+
+function setCached(url, data) {
+  cache.set(url, {
+    data,
+    ts: Date.now(),
+  });
+}
+
+/* ============================================================================
+   FETCH THE SPACE
+============================================================================ */
+
+async function fetchTheSpace(url, retry = 0) {
+  const cached = getCached(url);
+
+  if (cached) {
     console.log('🟢 CACHE HIT:', url);
-    return cached.data;
+    return cached;
   }
 
   console.log('🌐 FETCH THE SPACE:', url);
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-    ],
-  });
+  const currentPage = await getBrowserPage();
 
   try {
-    const context = await browser.newContext({
-      locale: 'it-IT',
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-    });
+    /*
+     * IMPORTANTISSIMO:
+     *
+     * Non usiamo networkidle.
+     *
+     * The Space può avere richieste persistenti,
+     * analytics, tracking, ecc.
+     *
+     * Ci interessa solo che il documento sia disponibile.
+     */
 
-    const page = await context.newPage();
+    if (
+      currentPage.url() === 'about:blank' ||
+      !currentPage.url().startsWith(THE_SPACE_BASE_URL)
+    ) {
+      console.log('🌍 Apertura homepage The Space...');
 
-    await page.goto('https://www.thespacecinema.it/', {
-      waitUntil: 'networkidle',
-      timeout: 30000,
-    });
-
-    await page.waitForTimeout(1500);
-
-    const result = await page.evaluate(async (apiUrl) => {
-      const res = await fetch(apiUrl, {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json, text/plain, */*',
-          Referer: 'https://www.thespacecinema.it/',
-        },
+      await currentPage.goto(THE_SPACE_BASE_URL, {
+        waitUntil: 'domcontentloaded',
+        timeout: PAGE_TIMEOUT,
       });
 
-      const text = await res.text();
-
-      if (!res.ok) {
-        throw new Error(
-          `The Space HTTP ${res.status}: ${text.substring(0, 500)}`
-        );
-      }
-
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(
-          `The Space returned non-JSON response: ${text.substring(0, 500)}`
-        );
-      }
-    }, url);
-
-    console.log('📦 THE SPACE RESPONSE TYPE:', typeof result);
-    console.log(
-      '📦 THE SPACE IS ARRAY:',
-      Array.isArray(result)
-    );
-
-    if (Array.isArray(result)) {
-      console.log(
-        '📦 THE SPACE ARRAY LENGTH:',
-        result.length
-      );
-    } else if (result && typeof result === 'object') {
-      console.log(
-        '📦 THE SPACE KEYS:',
-        Object.keys(result)
-      );
+      console.log('✅ Homepage The Space caricata');
     }
 
-    cache.set(url, {
-      data: result,
-      ts: Date.now(),
-    });
+    const result = await currentPage.evaluate(
+      async ({ apiUrl, timeout }) => {
+        const controller = new AbortController();
+
+        const timer = setTimeout(() => {
+          controller.abort();
+        }, timeout);
+
+        try {
+          const res = await fetch(apiUrl, {
+            method: 'GET',
+            credentials: 'include',
+            signal: controller.signal,
+            headers: {
+              Accept: 'application/json, text/plain, */*',
+              Referer: 'https://www.thespacecinema.it/',
+            },
+          });
+
+          const text = await res.text();
+
+          if (!res.ok) {
+            throw new Error(
+              `The Space HTTP ${res.status}: ${text.substring(0, 500)}`
+            );
+          }
+
+          try {
+            return JSON.parse(text);
+          } catch {
+            throw new Error(
+              `The Space returned non-JSON response: ${text.substring(
+                0,
+                500
+              )}`
+            );
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      {
+        apiUrl: url,
+        timeout: API_TIMEOUT,
+      }
+    );
+
+    console.log(
+      '📦 THE SPACE RESPONSE:',
+      Array.isArray(result)
+        ? `ARRAY (${result.length})`
+        : typeof result
+    );
+
+    setCached(url, result);
 
     return result;
-  } finally {
-    await browser.close();
+  } catch (error) {
+    console.error(
+      `❌ FETCH THE SPACE ERROR (retry ${retry}):`,
+      error?.message || error
+    );
+
+    /*
+     * Un solo retry.
+     *
+     * Se la pagina/context è morto, lo ricreiamo.
+     */
+
+    if (retry < 1) {
+      console.log('🔄 Ricreo browser e riprovo...');
+
+      await closeBrowser();
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      return fetchTheSpace(url, retry + 1);
+    }
+
+    throw error;
   }
 }
- 
- 
-// ─── Estrae l'array film dalla risposta The Space ─────────────────────────────
+
+/* ============================================================================
+   DATE EUROPE/ROME
+============================================================================ */
+
+function getRomeDate(offsetDays = 0) {
+  const now = new Date();
+
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(now);
+
+  let year;
+  let month;
+  let day;
+
+  for (const part of parts) {
+    if (part.type === 'year') year = Number(part.value);
+    if (part.type === 'month') month = Number(part.value);
+    if (part.type === 'day') day = Number(part.value);
+  }
+
+  const date = new Date(
+    Date.UTC(year, month - 1, day + offsetDays)
+  );
+
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+
+  return `${y}-${m}-${d}`;
+}
+
+/* ============================================================================
+   DISTANZA
+============================================================================ */
+
+function getDistanceKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+
+  return (
+    R *
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+  );
+}
+
+/* ============================================================================
+   NORMALIZZAZIONE TITOLI
+============================================================================ */
+
+function normalize(value) {
+  if (!value) return '';
+
+  return String(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titlesMatch(a, b) {
+  const na = normalize(a);
+  const nb = normalize(b);
+
+  if (!na || !nb) {
+    return false;
+  }
+
+  if (na === nb) {
+    return true;
+  }
+
+  if (na.length > 4 && nb.includes(na)) {
+    return true;
+  }
+
+  if (nb.length > 4 && na.includes(nb)) {
+    return true;
+  }
+
+  const wordsA = na
+    .split(' ')
+    .filter((word) => word.length > 2);
+
+  const wordsB = nb
+    .split(' ')
+    .filter((word) => word.length > 2);
+
+  const matches = wordsA.filter((word) =>
+    wordsB.includes(word)
+  );
+
+  return (
+    matches.length >=
+    Math.min(
+      2,
+      wordsA.length,
+      wordsB.length
+    )
+  );
+}
+
+/* ============================================================================
+   ESTRAZIONE FILM
+============================================================================ */
+
 function extractFilms(response) {
   if (Array.isArray(response)) {
     return response;
@@ -303,7 +595,6 @@ function extractFilms(response) {
     return [];
   }
 
-  // Formati possibili
   const candidates = [
     response.result,
     response.films,
@@ -318,8 +609,10 @@ function extractFilms(response) {
     }
   }
 
-  // Alcune API annidano il risultato
-  if (response.result && typeof response.result === 'object') {
+  if (
+    response.result &&
+    typeof response.result === 'object'
+  ) {
     const nested = [
       response.result.films,
       response.result.data,
@@ -336,42 +629,12 @@ function extractFilms(response) {
 
   return [];
 }
- 
 
+/* ============================================================================
+   SESSIONI
+============================================================================ */
 
-// ─── Distanza in km ───────────────────────────────────────────────────────────
-function getDistanceKm(lat1, lng1, lat2, lng2) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// ─── Normalizza titolo per matching ──────────────────────────────────────────
-function normalize(t) {
-  return t.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ').trim();
-}
-
-function titlesMatch(a, b) {
-  const na = normalize(a);
-  const nb = normalize(b);
-  if (na === nb) return true;
-  if (na.length > 4 && nb.includes(na)) return true;
-  if (nb.length > 4 && na.includes(nb)) return true;
-  const wordsA = na.split(' ').filter(w => w.length > 2);
-  const wordsB = nb.split(' ').filter(w => w.length > 2);
-  return wordsA.filter(w => wordsB.includes(w)).length >= Math.min(2, wordsA.length, wordsB.length);
-}
-
- 
-// ─── Normalizza sessioni da risposta The Space ────────────────────────────────
-function parseSessions(film) {
+function extractRawSessions(film) {
   if (!film || typeof film !== 'object') {
     return [];
   }
@@ -382,536 +645,536 @@ function parseSessions(film) {
     film.showings ??
     [];
 
-  let sessions = [];
+  if (!Array.isArray(rawGroups)) {
+    return [];
+  }
 
-  if (Array.isArray(rawGroups)) {
-    for (const group of rawGroups) {
-      if (Array.isArray(group?.sessions)) {
-        sessions.push(...group.sessions);
-      } else if (Array.isArray(group?.showings)) {
-        sessions.push(...group.showings);
-      } else if (
-        group &&
-        typeof group === 'object' &&
-        (
-          group.startTime ||
-          group.showingTime ||
-          group.time
-        )
-      ) {
-        sessions.push(group);
-      }
+  const sessions = [];
+
+  for (const group of rawGroups) {
+    if (Array.isArray(group?.sessions)) {
+      sessions.push(...group.sessions);
+      continue;
+    }
+
+    if (Array.isArray(group?.showings)) {
+      sessions.push(...group.showings);
+      continue;
+    }
+
+    if (
+      group &&
+      typeof group === 'object' &&
+      (
+        group.startTime ||
+        group.showingTime ||
+        group.time
+      )
+    ) {
+      sessions.push(group);
     }
   }
 
-  return sessions
-    .map((s) => {
-      const rawTime =
-        s?.startTime ??
-        s?.showingTime ??
-        s?.time ??
-        '';
-
-      let time = rawTime;
-
-      if (
-        typeof rawTime === 'string' &&
-        rawTime.length >= 16 &&
-        rawTime.includes('T')
-      ) {
-        time = rawTime.substring(11, 16);
-      }
-
-      const bookingUrl =
-        s?.bookingUrl?.startsWith('http')
-          ? s.bookingUrl
-          : `https://www.thespacecinema.it${
-              s?.bookingUrl ?? ''
-            }`;
-
-      return {
-        id: String(
-          s?.sessionId ??
-          s?.id ??
-          ''
-        ),
-
-        time,
-
-        hall:
-          s?.screenName ??
-          s?.screen?.name ??
-          s?.hall?.name ??
-          null,
-
-        format:
-          Array.isArray(s?.attributes)
-            ? s.attributes
-                .map((a) => a?.name)
-                .filter(Boolean)
-                .join(', ')
-            : null,
-
-        bookingUrl,
-      };
-    })
-    .filter((s) => s.time);
+  return sessions;
 }
- 
 
+function formatSession(session) {
+  const rawTime =
+    session?.startTime ??
+    session?.showingTime ??
+    session?.time ??
+    '';
 
-app.get("/", (req, res) => {
+  let time = '';
+
+  if (typeof rawTime === 'string') {
+    /*
+     * ISO:
+     * 2026-08-07T20:30:00
+     *
+     * diventa:
+     * 20:30
+     */
+
+    if (
+      rawTime.includes('T') &&
+      rawTime.length >= 16
+    ) {
+      time = rawTime.substring(11, 16);
+    } else {
+      time = rawTime.substring(0, 5);
+    }
+  }
+
+  let bookingUrl = '';
+
+  if (
+    typeof session?.bookingUrl === 'string' &&
+    session.bookingUrl
+  ) {
+    bookingUrl =
+      session.bookingUrl.startsWith('http')
+        ? session.bookingUrl
+        : `${THE_SPACE_BASE_URL}${session.bookingUrl}`;
+  }
+
+  return {
+    id: String(
+      session?.sessionId ??
+      session?.id ??
+      ''
+    ),
+
+    time,
+
+    hall:
+      session?.screenName ??
+      session?.screen?.name ??
+      session?.hall?.name ??
+      null,
+
+    format:
+      Array.isArray(session?.attributes)
+        ? session.attributes
+            .map((attribute) => attribute?.name)
+            .filter(Boolean)
+            .join(', ')
+        : null,
+
+    bookingUrl,
+  };
+}
+
+function parseSessions(film) {
+  return extractRawSessions(film)
+    .map(formatSession)
+    .filter((session) => session.time);
+}
+
+/* ============================================================================
+   NORMALIZZA FILM
+============================================================================ */
+
+function normalizeFilm(film) {
+  const sessions = parseSessions(film);
+
+  return {
+    id: String(
+      film?.filmId ??
+      film?.id ??
+      ''
+    ),
+
+    title:
+      film?.filmTitle ??
+      film?.title ??
+      film?.name ??
+      'Titolo sconosciuto',
+
+    posterUrl:
+      film?.posterImageSrc ??
+      film?.posterUrl ??
+      film?.imageUrl ??
+      null,
+
+    duration:
+      film?.runningTime
+        ? `${film.runningTime} min`
+        : null,
+
+    sessions,
+  };
+}
+
+/* ============================================================================
+   URL THE SPACE
+============================================================================ */
+
+function getShowingsUrl(cinemaId, dateKey) {
+  const showingDate = `${dateKey}T00:00:00`;
+
+  return (
+    `${THE_SPACE_BASE_URL}/api/microservice/showings/cinemas/${cinemaId}/films` +
+    `?showingDate=${encodeURIComponent(showingDate)}` +
+    `&minEmbargoLevel=3` +
+    `&includesSession=true` +
+    `&includeSessionAttributes=true`
+  );
+}
+
+/* ============================================================================
+   CINEMA UTILS
+============================================================================ */
+
+function findCinema(cinemaId) {
+  return CINEMAS.find(
+    (cinema) => cinema.id === cinemaId
+  );
+}
+
+/* ============================================================================
+   HEALTH
+============================================================================ */
+
+app.get('/', (req, res) => {
   res.json({
-    status: "ok",
-    service: "cinedate-cinema-server"
+    status: 'ok',
+    service: 'cinedate-cinema-server',
+    timezone: 'Europe/Rome',
   });
 });
 
-// ─── GET /cinemas — lista cinema ─────────────────────────────────────────────
+/* ============================================================================
+   GET /cinemas
+============================================================================ */
+
 app.get('/cinemas', (req, res) => {
   res.json(CINEMAS);
 });
 
-// ─── GET /cinema/nearby — cinema vicini ──────────────────────────────────────
-app.get('/cinema/nearby', (req, res) => {
-  const { lat, lng, radius = '25' } = req.query;
-  if (!lat || !lng) return res.status(400).json({ error: 'lat e lng obbligatori' });
+/* ============================================================================
+   GET /cinema/nearby
+============================================================================ */
 
-  const userLat = parseFloat(lat);
-  const userLng = parseFloat(lng);
-  const radiusKm = parseInt(radius) || 25;
+app.get('/cinema/nearby', (req, res) => {
+  const {
+    lat,
+    lng,
+    radius = '25',
+  } = req.query;
+
+  if (
+    lat === undefined ||
+    lng === undefined
+  ) {
+    return res.status(400).json({
+      error: 'lat e lng obbligatori',
+    });
+  }
+
+  const userLat = Number(lat);
+  const userLng = Number(lng);
+  const radiusKm = Number(radius);
+
+  if (
+    !Number.isFinite(userLat) ||
+    !Number.isFinite(userLng) ||
+    !Number.isFinite(radiusKm)
+  ) {
+    return res.status(400).json({
+      error: 'lat, lng e radius devono essere numerici',
+    });
+  }
 
   const nearby = CINEMAS
-    .map(c => ({ ...c, distanceKm: Math.round(getDistanceKm(userLat, userLng, c.lat, c.lng) * 10) / 10 }))
-    .filter(c => c.distanceKm <= radiusKm)
-    .sort((a, b) => a.distanceKm - b.distanceKm);
+    .map((cinema) => ({
+      ...cinema,
+      distanceKm:
+        Math.round(
+          getDistanceKm(
+            userLat,
+            userLng,
+            cinema.lat,
+            cinema.lng
+          ) * 10
+        ) / 10,
+    }))
+    .filter(
+      (cinema) =>
+        cinema.distanceKm <= radiusKm
+    )
+    .sort(
+      (a, b) =>
+        a.distanceKm - b.distanceKm
+    );
 
-  res.json({ cinemas: nearby });
+  res.json({
+    cinemas: nearby,
+  });
 });
 
- 
- 
-// ─── GET /cinema/showtimes/:id — programmazione ───────────────────────────────
+/* ============================================================================
+   GET /cinema/showtimes/:id
+============================================================================ */
 
-app.get('/cinema/showtimes/:id', async (req, res) => {
-  const cinemaId = Number(req.params.id);
+app.get(
+  '/cinema/showtimes/:id',
+  async (req, res) => {
+    const cinemaId = Number(
+      req.params.id
+    );
 
-  console.log('');
-  console.log('🎬 SHOWTIMES REQUEST');
-  console.log('🏢 Cinema ID:', cinemaId);
+    console.log('');
+    console.log(
+      '🎬 SHOWTIMES REQUEST'
+    );
+    console.log(
+      '🏢 Cinema ID:',
+      cinemaId
+    );
 
-  if (!cinemaId) {
-    return res.status(400).json({
-      error: 'id non valido',
-    });
-  }
-
-  try {
-    const days = [];
-
-    for (let i = 0; i < 7; i++) {
-      // -----------------------------------------------------------
-      // DATA LOCALE ITALIA
-      // -----------------------------------------------------------
-
-      const dateObj = new Date();
-
-      dateObj.setDate(
-        dateObj.getDate() + i
-      );
-
-      const year = dateObj.getFullYear();
-
-      const month = String(
-        dateObj.getMonth() + 1
-      ).padStart(2, '0');
-
-      const day = String(
-        dateObj.getDate()
-      ).padStart(2, '0');
-
-      const dateKey =
-        `${year}-${month}-${day}`;
-
-      const showingDate =
-        `${dateKey}T00:00:00`;
-
-      // -----------------------------------------------------------
-      // URL THE SPACE
-      // -----------------------------------------------------------
-
-      const url =
-        `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films` +
-        `?showingDate=${encodeURIComponent(showingDate)}` +
-        `&minEmbargoLevel=3` +
-        `&includesSession=true` +
-        `&includeSessionAttributes=true`;
-
-      console.log('');
-      console.log('────────────────────────────────────');
-      console.log('📅 DATA:', dateKey);
-      console.log('🌐 URL:', url);
-
-      try {
-        // ---------------------------------------------------------
-        // CHIAMATA THE SPACE
-        // ---------------------------------------------------------
-
-        const response =
-          await fetchTheSpace(url);
-
-        // ---------------------------------------------------------
-        // DEBUG RISPOSTA REALE
-        // ---------------------------------------------------------
-
-        console.log(
-          '📦 RESPONSE TYPE:',
-          Array.isArray(response)
-            ? 'ARRAY'
-            : typeof response
-        );
-
-        if (response && typeof response === 'object') {
-          console.log(
-            '🔑 RESPONSE KEYS:',
-            Object.keys(response)
-          );
-        }
-
-        console.log(
-          '📦 RAW RESPONSE PREVIEW:',
-          JSON.stringify(response).substring(0, 3000)
-        );
-
-        // ---------------------------------------------------------
-        // ESTRAZIONE FILM
-        // ---------------------------------------------------------
-
-        let data = [];
-
-        if (Array.isArray(response)) {
-          data = response;
-        } else if (
-          Array.isArray(response?.result)
-        ) {
-          data = response.result;
-        } else if (
-          Array.isArray(response?.films)
-        ) {
-          data = response.films;
-        } else if (
-          Array.isArray(response?.data)
-        ) {
-          data = response.data;
-        } else if (
-          Array.isArray(response?.items)
-        ) {
-          data = response.items;
-        }
-
-        console.log(
-          '🎞 FILM RAW TROVATI:',
-          data.length
-        );
-
-        // ---------------------------------------------------------
-        // DEBUG TITOLI
-        // ---------------------------------------------------------
-
-        console.log(
-          '🎬 TITOLI RAW:',
-          data.map((film) => (
-            film?.filmTitle ??
-            film?.title ??
-            film?.name ??
-            'SENZA TITOLO'
-          ))
-        );
-
-        // ---------------------------------------------------------
-        // NORMALIZZAZIONE FILM
-        // ---------------------------------------------------------
-
-        const films = data.map((film) => {
-          const rawGroups =
-            film?.showingGroups ??
-            film?.sessions ??
-            film?.showings ??
-            [];
-
-          const groups =
-            Array.isArray(rawGroups)
-              ? rawGroups
-              : [];
-
-          const sessions = groups
-            .flatMap((group) => {
-              if (
-                Array.isArray(group?.sessions)
-              ) {
-                return group.sessions;
-              }
-
-              if (
-                Array.isArray(group?.showings)
-              ) {
-                return group.showings;
-              }
-
-              // Alcune risposte possono avere
-              // direttamente le sessioni.
-              if (
-                group?.startTime ||
-                group?.showingTime ||
-                group?.time
-              ) {
-                return [group];
-              }
-
-              return [];
-            })
-            .map((session) => {
-              const rawTime =
-                session?.startTime ??
-                session?.showingTime ??
-                session?.time ??
-                '';
-
-              let time = '';
-
-              if (
-                typeof rawTime === 'string'
-              ) {
-                if (rawTime.length >= 16) {
-                  time =
-                    rawTime.substring(11, 16);
-                } else {
-                  time = rawTime;
-                }
-              }
-
-              return {
-                id: String(
-                  session?.sessionId ??
-                  session?.id ??
-                  ''
-                ),
-
-                time,
-
-                hall:
-                  session?.screenName ??
-                  session?.screen?.name ??
-                  session?.hall?.name ??
-                  null,
-
-                format:
-                  Array.isArray(
-                    session?.attributes
-                  )
-                    ? session.attributes
-                        .map((a) => a?.name)
-                        .filter(Boolean)
-                        .join(', ')
-                    : null,
-
-                bookingUrl:
-                  typeof session?.bookingUrl === 'string'
-                    ? (
-                        session.bookingUrl.startsWith('http')
-                          ? session.bookingUrl
-                          : `https://www.thespacecinema.it${session.bookingUrl}`
-                      )
-                    : '',
-              };
-            })
-            .filter((session) => session.time);
-
-          return {
-            id: String(
-              film?.filmId ??
-              film?.id ??
-              ''
-            ),
-
-            title:
-              film?.filmTitle ??
-              film?.title ??
-              film?.name ??
-              'Titolo sconosciuto',
-
-            posterUrl:
-              film?.posterImageSrc ??
-              film?.posterUrl ??
-              film?.imageUrl ??
-              null,
-
-            duration:
-              film?.runningTime
-                ? `${film.runningTime} min`
-                : null,
-
-            sessions,
-          };
-        });
-
-        console.log(
-          '✅ FILM NORMALIZZATI:',
-          films.length
-        );
-
-        console.log(
-          '🎥 FILM:',
-          films.map((film) => ({
-            id: film.id,
-            title: film.title,
-            sessions: film.sessions.length,
-          }))
-        );
-
-        // ---------------------------------------------------------
-        // RISULTATO GIORNO
-        // ---------------------------------------------------------
-
-        days.push({
-          date: dateKey,
-          films,
-        });
-
-      } catch (error) {
-        console.error(
-          '❌ ERRORE THE SPACE:',
-          {
-            cinemaId,
-            date: dateKey,
-            message: error?.message,
-            stack: error?.stack,
-          }
-        );
-
-        days.push({
-          date: dateKey,
-          films: [],
-        });
-      }
+    if (!Number.isInteger(cinemaId)) {
+      return res.status(400).json({
+        error: 'id non valido',
+      });
     }
 
-    // -------------------------------------------------------------
-    // SUMMARY
-    // -------------------------------------------------------------
+    const cinema = findCinema(cinemaId);
 
-    console.log('');
-    console.log('════════════════════════════════════');
-    console.log('🏁 SHOWTIMES COMPLETATO');
-    console.log('🏢 Cinema:', cinemaId);
+    if (!cinema) {
+      return res.status(404).json({
+        error: 'Cinema non trovato',
+      });
+    }
 
-    console.log(
-      '📅 Giorni:',
-      days.length
-    );
+    try {
+      const days = [];
 
-    console.log(
-      '🎬 Film totali:',
-      days.reduce(
-        (total, day) =>
-          total + day.films.length,
-        0
-      )
-    );
+      /*
+       * I giorni vengono richiesti in sequenza.
+       *
+       * Playwright viene però riutilizzato.
+       */
 
-    console.log(
-      '📊 SUMMARY:',
-      days.map((day) => ({
-        date: day.date,
-        films: day.films.length,
-      }))
-    );
+      for (let i = 0; i < 7; i++) {
+        const dateKey = getRomeDate(i);
 
-    console.log('════════════════════════════════════');
-    console.log('');
+        console.log('');
+        console.log(
+          '────────────────────────────────────'
+        );
+        console.log(
+          '📅 DATA:',
+          dateKey
+        );
 
-    // -------------------------------------------------------------
-    // CACHE
-    // -------------------------------------------------------------
+        const url =
+          getShowingsUrl(
+            cinemaId,
+            dateKey
+          );
 
-    res.setHeader(
-      'Cache-Control',
-      's-maxage=1800, stale-while-revalidate'
-    );
+        console.log(
+          '🌐 URL:',
+          url
+        );
 
-    return res.status(200).json({
-      cinemaId,
-      days,
-    });
+        try {
+          const response =
+            await fetchTheSpace(url);
 
-  } catch (error) {
-    console.error(
-      '🔥 SHOWTIMES FATAL ERROR:',
-      error
-    );
+          const data =
+            extractFilms(response);
 
-    return res.status(500).json({
-      error:
-        error?.message ??
-        'Errore interno',
-    });
+          console.log(
+            '🎞 FILM RAW:',
+            data.length
+          );
+
+          const films = data
+            .map(normalizeFilm)
+            .filter(
+              (film) =>
+                film.title &&
+                film.title !==
+                  'Titolo sconosciuto'
+            );
+
+          console.log(
+            '✅ FILM NORMALIZZATI:',
+            films.length
+          );
+
+          console.log(
+            '🎥 FILM:',
+            films.map((film) => ({
+              id: film.id,
+              title: film.title,
+              sessions:
+                film.sessions.length,
+            }))
+          );
+
+          days.push({
+            date: dateKey,
+            films,
+          });
+        } catch (error) {
+          console.error(
+            '❌ ERRORE THE SPACE:',
+            {
+              cinemaId,
+              date: dateKey,
+              message:
+                error?.message ||
+                String(error),
+            }
+          );
+
+          /*
+           * Non facciamo fallire tutto l'endpoint.
+           */
+
+          days.push({
+            date: dateKey,
+            films: [],
+            error:
+              error?.message ||
+              'Errore caricamento programmazione',
+          });
+        }
+      }
+
+      console.log('');
+      console.log(
+        '════════════════════════════════════'
+      );
+      console.log(
+        '🏁 SHOWTIMES COMPLETATO'
+      );
+      console.log(
+        '🏢 Cinema:',
+        cinema.name
+      );
+      console.log(
+        '📅 Giorni:',
+        days.length
+      );
+      console.log(
+        '🎬 Film totali:',
+        days.reduce(
+          (total, day) =>
+            total + day.films.length,
+          0
+        )
+      );
+      console.log(
+        '════════════════════════════════════'
+      );
+
+      res.setHeader(
+        'Cache-Control',
+        's-maxage=1800, stale-while-revalidate'
+      );
+
+      return res.status(200).json({
+        cinemaId,
+        cinema: cinema.name,
+        days,
+      });
+    } catch (error) {
+      console.error(
+        '🔥 SHOWTIMES FATAL ERROR:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error?.message ??
+          'Errore interno',
+      });
+    }
   }
-});
- 
+);
 
+/* ============================================================================
+   GET /cinema/check-film
+============================================================================ */
 
+app.get(
+  '/cinema/check-film',
+  async (req, res) => {
+    const {
+      title,
+      lat,
+      lng,
+      radius = '25',
+    } = req.query;
 
- 
-// ─── GET /cinema/check-film — film in sala vicino ────────────────────────────
-app.get('/cinema/check-film', async (req, res) => {
-  const { title, lat, lng, radius = '25' } = req.query;
+    if (
+      !title ||
+      lat === undefined ||
+      lng === undefined
+    ) {
+      return res.status(400).json({
+        error:
+          'title, lat, lng obbligatori',
+      });
+    }
 
-  if (!title || !lat || !lng) {
-    return res.status(400).json({
-      error: 'title, lat, lng obbligatori',
-    });
-  }
+    const userLat = Number(lat);
+    const userLng = Number(lng);
+    const radiusKm = Number(radius);
 
-  const userLat = parseFloat(lat);
-  const userLng = parseFloat(lng);
-  const radiusKm = parseInt(radius) || 25;
+    if (
+      !Number.isFinite(userLat) ||
+      !Number.isFinite(userLng) ||
+      !Number.isFinite(radiusKm)
+    ) {
+      return res.status(400).json({
+        error:
+          'lat, lng e radius devono essere numerici',
+      });
+    }
 
-  const nearbyCinemas = CINEMAS
-    .map(c => ({
-      ...c,
-      distanceKm: getDistanceKm(
-        userLat,
-        userLng,
-        c.lat,
-        c.lng
-      ),
-    }))
-    .filter(c => c.distanceKm <= radiusKm)
-    .sort((a, b) => a.distanceKm - b.distanceKm)
-    .slice(0, 5);
+    const nearbyCinemas =
+      CINEMAS
+        .map((cinema) => ({
+          ...cinema,
+          distanceKm:
+            getDistanceKm(
+              userLat,
+              userLng,
+              cinema.lat,
+              cinema.lng
+            ),
+        }))
+        .filter(
+          (cinema) =>
+            cinema.distanceKm <=
+            radiusKm
+        )
+        .sort(
+          (a, b) =>
+            a.distanceKm -
+            b.distanceKm
+        )
+        .slice(0, 5);
 
-  if (!nearbyCinemas.length) {
-    return res.json({
-      inCinema: false,
-      showings: [],
-      filmTitle: title,
-    });
-  }
+    if (!nearbyCinemas.length) {
+      return res.json({
+        inCinema: false,
+        showings: [],
+        filmTitle: title,
+      });
+    }
 
-  const today =
-    new Date().toISOString().split('T')[0] +
-    'T00:00:00';
+    /*
+     * Data italiana.
+     */
 
-  const showings = [];
+    const today =
+      getRomeDate(0);
 
-  await Promise.all(
-    nearbyCinemas.map(async cinema => {
+    const showings = [];
+
+    /*
+     * ATTENZIONE:
+     *
+     * Facciamo le richieste in parallelo,
+     * ma viene riutilizzata la stessa pagina.
+     *
+     * Per evitare conflitti su page.evaluate,
+     * usiamo una piccola coda.
+     */
+
+    for (const cinema of nearbyCinemas) {
       try {
         const url =
-          `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinema.id}/films` +
-          `?showingDate=${encodeURIComponent(today)}` +
-          `&minEmbargoLevel=3` +
-          `&includesSession=true`;
+          getShowingsUrl(
+            cinema.id,
+            today
+          );
 
         const response =
           await fetchTheSpace(url);
@@ -926,57 +1189,162 @@ app.get('/cinema/check-film', async (req, res) => {
           data.length
         );
 
-        const match = data.find(f =>
-          titlesMatch(
-            f?.filmTitle ??
-            f?.title ??
-            f?.name ??
-            '',
-            title
-          )
+        const match = data.find(
+          (film) =>
+            titlesMatch(
+              film?.filmTitle ??
+                film?.title ??
+                film?.name ??
+                '',
+              title
+            )
         );
 
-        if (!match) return;
+        if (!match) {
+          continue;
+        }
 
         const sessions =
           parseSessions(match)
-            .map(s => s.time)
+            .map(
+              (session) =>
+                session.time
+            )
             .filter(Boolean)
             .slice(0, 5);
+
+        if (!sessions.length) {
+          continue;
+        }
 
         showings.push({
           cinema: cinema.name,
           cinemaId: cinema.id,
+
           distanceKm:
             Math.round(
               cinema.distanceKm * 10
             ) / 10,
-          sessions,
-          bookingUrl:
-            `https://www.thespacecinema.it/cinema/${cinema.slug}/acquisto-biglietti`,
-        });
 
-      } catch (err) {
+          sessions,
+
+          bookingUrl:
+            `${THE_SPACE_BASE_URL}/cinema/${cinema.slug}/acquisto-biglietti`,
+        });
+      } catch (error) {
         console.error(
           `❌ CHECK FILM ${cinema.name}:`,
-          err?.message || err
+          error?.message ||
+            error
         );
       }
-    })
+    }
+
+    showings.sort(
+      (a, b) =>
+        a.distanceKm -
+        b.distanceKm
+    );
+
+    return res.json({
+      inCinema:
+        showings.length > 0,
+
+      showings,
+
+      filmTitle: title,
+
+      date: today,
+    });
+  }
+);
+
+/* ============================================================================
+   ERROR HANDLER
+============================================================================ */
+
+app.use(
+  (error, req, res, next) => {
+    console.error(
+      '🔥 EXPRESS ERROR:',
+      error
+    );
+
+    if (res.headersSent) {
+      return next(error);
+    }
+
+    res.status(500).json({
+      error:
+        error?.message ??
+        'Errore interno',
+    });
+  }
+);
+
+/* ============================================================================
+   START
+============================================================================ */
+
+const server = app.listen(
+  PORT,
+  () => {
+    console.log('');
+    console.log(
+      '════════════════════════════════════'
+    );
+    console.log(
+      `🎬 Cinema server attivo su porta ${PORT}`
+    );
+    console.log(
+      '🇮🇹 Timezone: Europe/Rome'
+    );
+    console.log(
+      `🎥 Cinema configurati: ${CINEMAS.length}`
+    );
+    console.log(
+      '════════════════════════════════════'
+    );
+    console.log('');
+  }
+);
+
+/* ============================================================================
+   SHUTDOWN
+============================================================================ */
+
+async function shutdown(signal) {
+  console.log(
+    `⚠️ ${signal} ricevuto. Shutdown...`
   );
 
-  showings.sort(
-    (a, b) => a.distanceKm - b.distanceKm
-  );
+  server.close(async () => {
+    await closeBrowser();
 
-  res.json({
-    inCinema: showings.length > 0,
-    showings,
-    filmTitle: title,
+    console.log(
+      '✅ Server chiuso correttamente'
+    );
+
+    process.exit(0);
   });
-});
- 
 
-// ─── START ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`🎬 Cinema server attivo su porta ${PORT}`));
+  /*
+   * Fallback se Express rimane bloccato.
+   */
+
+  setTimeout(async () => {
+    await closeBrowser();
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.once(
+  'SIGTERM',
+  () => shutdown('SIGTERM')
+);
+
+process.once(
+  'SIGINT',
+  () => shutdown('SIGINT')
+);
+ 
