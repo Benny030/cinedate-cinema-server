@@ -11,193 +11,25 @@ const cache = new Map();
 const CACHE_TTL = 1000 * 60 * 20; // 20 minuti
 
 const CINEMAS = [
- // Emilia-Romagna
-  {
-    id: 1013,
-    name: 'The Space Parma Campus',
-    city: 'Parma',
-    address: 'Largo Sergio Leone 7/A',
-    lat: 44.7662,
-    lng: 10.3213,
-    slug: 'parma-campus',
-  },
-  {
-    id: 1031,
-    name: 'The Space Parma Centro',
-    city: 'Parma',
-    address: 'Via Toscana 22',
-    lat: 44.7904,
-    lng: 10.3347,
-    slug: 'parma-centro',
-  },
-  {
-    id: 1003,
-    name: 'The Space Bologna',
-    city: 'Bologna',
-    address: 'Viale Europa 5',
-    lat: 44.5286,
-    lng: 11.3972,
-    slug: 'bologna',
-  },
-
-  // Roma
-  {
-    id: 1025,
-    name: "The Space Roma Parco de' Medici",
-    city: 'Roma',
-    address: 'Viale Parco de Medici 135',
-    lat: 41.8078,
-    lng: 12.3819,
-    slug: 'roma-parco-de-medici', 
-  },
-  {
-    id: 1021,
-    name: 'The Space Roma Moderno',
-    city: 'Roma',
-    address: 'Piazza della Repubblica 44',
-    lat: 41.9011,
-    lng: 12.4966,
-    slug: 'roma-moderno',
-  },
-
-  // Milano
-  {
-    id: 1004,
-    name: 'The Space Cerro Maggiore',
-    city: 'Milano',
-    address: 'Via Roma 104, Cerro Maggiore',
-    lat: 45.5927,
-    lng: 8.9578,
-    slug: 'cerro-maggiore',
-  },
-  {
-    id: 1005,
-    name: 'The Space Rozzano',
-    city: 'Milano',
-    address: 'Via Cascina Secco 1, Rozzano',
-    lat: 45.3818,
-    lng: 9.1457,
-    slug: 'rozzano',
-  },
-
-  // Piemonte
-  {
-    id: 1028,
-    name: 'The Space Torino',
-    city: 'Torino',
-    address: 'Corso Grosseto 54, Beinasco',
-    lat: 45.1164,
-    lng: 7.5945,
-    slug: 'torino',
-  },
-
-  // Veneto
-  {
-    id: 1007,
-    name: 'The Space Verona',
-    city: 'Verona',
-    address: 'Via Col. Galliano 2',
-    lat: 45.4334,
-    lng: 10.9748,
-    slug: 'verona',
-  },
-
-  {
-    id: 1015,
-    name: 'The Space Limena',
-    city: 'Padova',
-    address: 'Via Lisbona 1, Limena',
-    lat: 45.4467,
-    lng: 11.8444,
-    slug: 'limena',
-  },
-
-  {
-    id: 1016,
-    name: 'The Space Vicenza',
-    city: 'Vicenza',
-    address: 'Via della Scienza 16, Torri di Quartesolo',
-    lat: 45.5145,
-    lng: 11.6082,
-    slug: 'vicenza-torri-di-quartesolo',
-  },
-
-  // Toscana
-  {
-    id: 1008,
-    name: 'The Space Firenze',
-    city: 'Firenze',
-    address: 'Via Tirso 8, Novoli',
-    lat: 43.7969,
-    lng: 11.2193,
-    slug: 'firenze',
-  },
-
-  // Campania
-  {
-    id: 1019,
-    name: 'The Space Napoli',
-    city: 'Napoli',
-    address: 'Via Gianturco 50',
-    lat: 40.8467,
-    lng: 14.2855,
-    slug: 'napoli',
-  },
-
-  {
-    id: 1010,
-    name: 'The Space Salerno',
-    city: 'Salerno',
-    address: 'Via Fiorentino 48',
-    lat: 40.6896,
-    lng: 14.7891,
-    slug: 'salerno',
-  },
-
-  // Liguria
-  {
-    id: 1011,
-    name: 'The Space Genova',
-    city: 'Genova',
-    address: 'Calata Gadda, Porto Antico',
-    lat: 44.4106,
-    lng: 8.9270,
-    slug: 'genova',
-  },
-
-  // Friuli
-  {
-    id: 1012,
-    name: 'The Space Trieste',
-    city: 'Trieste',
-    address: 'Via Luigi Negrelli 2',
-    lat: 45.6370,
-    lng: 13.7817,
-    slug: 'trieste',
-  },
-
-  // Sardegna
-  {
-    id: 1017,
-    name: 'The Space Cagliari Quartucciu',
-    city: 'Cagliari',
-    address: 'S.S. 554 Quartucciu',
-    lat: 39.2567,
-    lng: 9.1795,
-    slug: 'quartucciu',
-  },
-
-  // Sicilia
-  {
-    id: 1032,
-    name: 'The Space Catania Belpasso',
-    city: 'Catania',
-    address: 'C.da Pantano, Belpasso',
-    lat: 37.5839,
-    lng: 14.9846,
-    slug: 'belpasso',
-  },];
-
+  { id: 1013, name: 'The Space Parma Campus',           city: 'Parma',    lat: 44.8015, lng: 10.3279, slug: 'parma-campus' },
+  { id: 1014, name: 'The Space Parma Centro',            city: 'Parma',    lat: 44.7914, lng: 10.3277, slug: 'parma-centro' },
+  { id: 1001, name: 'The Space Bologna',                 city: 'Bologna',  lat: 44.4938, lng: 11.3024, slug: 'bologna' },
+  { id: 1002, name: 'The Space Roma Parco de Medici',    city: 'Roma',     lat: 41.8291, lng: 12.4194, slug: 'roma-parco-de-medici' },
+  { id: 1003, name: 'The Space Roma Moderno',            city: 'Roma',     lat: 41.9012, lng: 12.4993, slug: 'roma-moderno' },
+  { id: 1004, name: 'The Space Cerro Maggiore',          city: 'Milano',   lat: 45.5935, lng: 8.9705,  slug: 'cerro-maggiore' },
+  { id: 1005, name: 'The Space Rozzano',                 city: 'Milano',   lat: 45.3792, lng: 9.1514,  slug: 'rozzano' },
+  { id: 1006, name: 'The Space Torino',                  city: 'Torino',   lat: 45.0167, lng: 7.5833,  slug: 'torino' },
+  { id: 1007, name: 'The Space Verona',                  city: 'Verona',   lat: 45.4388, lng: 10.9917, slug: 'verona' },
+  { id: 1008, name: 'The Space Firenze',                 city: 'Firenze',  lat: 43.8065, lng: 11.2227, slug: 'firenze' },
+  { id: 1009, name: 'The Space Napoli',                  city: 'Napoli',   lat: 40.8518, lng: 14.2681, slug: 'napoli' },
+  { id: 1010, name: 'The Space Salerno',                 city: 'Salerno',  lat: 40.6765, lng: 14.7814, slug: 'salerno' },
+  { id: 1011, name: 'The Space Genova',                  city: 'Genova',   lat: 44.4087, lng: 8.9229,  slug: 'genova' },
+  { id: 1012, name: 'The Space Trieste',                 city: 'Trieste',  lat: 45.6543, lng: 13.7631, slug: 'trieste' },
+  { id: 1015, name: 'The Space Limena',                  city: 'Padova',   lat: 45.4584, lng: 11.8795, slug: 'limena' },
+  { id: 1016, name: 'The Space Vicenza',                 city: 'Vicenza',  lat: 45.5116, lng: 11.5699, slug: 'vicenza-torri-di-quartesolo' },
+  { id: 1017, name: 'The Space Cagliari Quartucciu',     city: 'Cagliari', lat: 39.2517, lng: 9.1993,  slug: 'quartucciu' },
+  { id: 1018, name: 'The Space Catania Belpasso',        city: 'Catania',  lat: 37.5869, lng: 14.9820, slug: 'belpasso' },
+];
 
 // ─── Playwright fetch con cache ───────────────────────────────────────────────
 async function fetchTheSpace(url) {
@@ -218,7 +50,7 @@ async function fetchTheSpace(url) {
     });
 
     const page = await context.newPage();
-    await page.goto('https://www.thespacecinema.it/', { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto('https://www.thespacecinema.it/', { waitUntil: 'networkidle', timeout: 300000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(async (apiUrl) => {
@@ -317,46 +149,233 @@ app.get('/cinema/nearby', (req, res) => {
   res.json({ cinemas: nearby });
 });
 
+ 
 // ─── GET /cinema/showtimes/:id — programmazione ───────────────────────────────
 app.get('/cinema/showtimes/:id', async (req, res) => {
-  const cinemaId = Number(req.params.id);
-  if (!cinemaId) return res.status(400).json({ error: 'id non valido' });
+
+  console.log('🚀 SHOWTIMES API START');
+
+  const cinemaId = String(req.params.id ?? '');
+
+  if (!cinemaId) {
+    return res.status(400).json({
+      error: 'cinemaId obbligatorio'
+    });
+  }
 
   try {
+
     const days = [];
 
     for (let i = 0; i < 7; i++) {
+
       const dateObj = new Date();
-      dateObj.setDate(dateObj.getDate() + i);
-      const dateKey = dateObj.toISOString().split('T')[0];
+
+      dateObj.setDate(
+        dateObj.getDate() + i
+      );
+
+      // Importante:
+      // usiamo la data locale, non toISOString(),
+      // per evitare problemi di timezone.
+      const dateKey = [
+        dateObj.getFullYear(),
+        String(dateObj.getMonth() + 1).padStart(2, '0'),
+        String(dateObj.getDate()).padStart(2, '0')
+      ].join('-');
+
       const showingDate = `${dateKey}T00:00:00`;
 
-      const url = `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films?showingDate=${showingDate}&minEmbargoLevel=3&includesSession=true&includeSessionAttributes=true`;
+      const url =
+        `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinemaId}/films` +
+        `?showingDate=${showingDate}` +
+        `&minEmbargoLevel=3` +
+        `&includesSession=true` +
+        `&includeSessionAttributes=true`;
 
       try {
+
+        console.log(
+          '🌐 CHIAMATA THE SPACE',
+          url
+        );
+
         const response = await fetchTheSpace(url);
-        const data = Array.isArray(response) ? response : (response?.result ?? response?.films ?? []);
 
-        const films = data.map(film => ({
-          id:        String(film.filmId ?? film.id ?? ''),
-          title:     film.filmTitle ?? film.title ?? film.name ?? 'Titolo sconosciuto',
-          posterUrl: film.posterImageSrc ?? film.posterUrl ?? film.imageUrl ?? null,
-          duration:  film.runningTime ? `${film.runningTime} min` : null,
-          sessions:  parseSessions(film),
-        }));
+        console.log(
+          '📦 RESPONSE OK',
+          cinemaId,
+          dateKey
+        );
 
-        days.push({ date: dateKey, films });
-      } catch (err) {
-        console.error(`Errore giorno ${dateKey}:`, err.message);
-        days.push({ date: dateKey, films: [] });
+        const data = Array.isArray(response)
+          ? response
+          : (
+              response?.result ??
+              response?.films ??
+              []
+            );
+
+        const films = data.map((film) => {
+
+          const rawGroups =
+            film.showingGroups ??
+            film.sessions ??
+            film.showings ??
+            [];
+
+          const groups = Array.isArray(rawGroups)
+            ? rawGroups
+            : [];
+
+          const sessions = groups
+            .flatMap((group) =>
+              Array.isArray(group.sessions)
+                ? group.sessions
+                : (
+                    Array.isArray(group.showings)
+                      ? group.showings
+                      : []
+                  )
+            )
+            .map((session) => {
+
+              const rawTime =
+                session.startTime ??
+                session.showingTime ??
+                session.time ??
+                '';
+
+              return {
+                id: String(
+                  session.sessionId ??
+                  session.id ??
+                  ''
+                ),
+
+                time:
+                  typeof rawTime === 'string' &&
+                  rawTime.length >= 16
+                    ? rawTime.substring(11, 16)
+                    : rawTime,
+
+                hall:
+                  session.screenName ??
+                  session.screen?.name ??
+                  session.hall?.name ??
+                  null,
+
+                format:
+                  Array.isArray(session.attributes)
+                    ? session.attributes
+                        .map((a) => a.name)
+                        .filter(Boolean)
+                        .join(', ')
+                    : null,
+
+                bookingUrl:
+                  session.bookingUrl?.startsWith('http')
+                    ? session.bookingUrl
+                    : `https://www.thespacecinema.it${session.bookingUrl ?? ''}`
+              };
+
+            });
+
+          return {
+
+            id: String(
+              film.filmId ??
+              film.id ??
+              ''
+            ),
+
+            title:
+              film.filmTitle ??
+              film.title ??
+              film.name ??
+              'Titolo sconosciuto',
+
+            posterUrl:
+              film.posterImageSrc ??
+              film.posterUrl ??
+              film.imageUrl ??
+              null,
+
+            duration:
+              film.runningTime
+                ? `${film.runningTime} min`
+                : null,
+
+            sessions
+
+          };
+
+        });
+
+        console.log(
+          '🎞 FILM:',
+          films.map((f) => ({
+            titolo: f.title,
+            sessioni: f.sessions.length
+          }))
+        );
+
+        days.push({
+          date: dateKey,
+          films
+        });
+
+      } catch (error) {
+
+        console.error(
+          '❌ THE SPACE ERROR',
+          {
+            cinemaId,
+            showingDate,
+            message: error?.message,
+            stack: error?.stack
+          }
+        );
+
+        days.push({
+          date: dateKey,
+          films: []
+        });
+
       }
+
     }
 
-    res.json({ cinemaId, days });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Cache HTTP compatibile con il comportamento
+    // indicato nell'implementazione Next.js di riferimento.
+    res.setHeader(
+      'Cache-Control',
+      's-maxage=1800, stale-while-revalidate'
+    );
+
+    return res.status(200).json({
+      cinemaId,
+      days
+    });
+
+  } catch (error) {
+
+    console.error(
+      '🔥 SHOWTIMES FATAL ERROR',
+      error
+    );
+
+    return res.status(500).json({
+      error:
+        error?.message ??
+        'Errore interno'
+    });
+
   }
+
 });
+ 
+
 
 // ─── GET /cinema/check-film — film in sala vicino ────────────────────────────
 app.get('/cinema/check-film', async (req, res) => {
