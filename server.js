@@ -667,95 +667,121 @@ app.get('/cinema/showtimes/:id', async (req, res) => {
  
 
 
+ 
 // ─── GET /cinema/check-film — film in sala vicino ────────────────────────────
 app.get('/cinema/check-film', async (req, res) => {
   const { title, lat, lng, radius = '25' } = req.query;
-  if (!title || !lat || !lng) return res.status(400).json({ error: 'title, lat, lng obbligatori' });
 
-  const userLat  = parseFloat(lat);
-  const userLng  = parseFloat(lng);
+  if (!title || !lat || !lng) {
+    return res.status(400).json({
+      error: 'title, lat, lng obbligatori',
+    });
+  }
+
+  const userLat = parseFloat(lat);
+  const userLng = parseFloat(lng);
   const radiusKm = parseInt(radius) || 25;
 
   const nearbyCinemas = CINEMAS
-    .map(c => ({ ...c, distanceKm: getDistanceKm(userLat, userLng, c.lat, c.lng) }))
+    .map(c => ({
+      ...c,
+      distanceKm: getDistanceKm(
+        userLat,
+        userLng,
+        c.lat,
+        c.lng
+      ),
+    }))
     .filter(c => c.distanceKm <= radiusKm)
     .sort((a, b) => a.distanceKm - b.distanceKm)
     .slice(0, 5);
 
   if (!nearbyCinemas.length) {
-    return res.json({ inCinema: false, showings: [], filmTitle: title });
+    return res.json({
+      inCinema: false,
+      showings: [],
+      filmTitle: title,
+    });
   }
 
-  const today = new Date().toISOString().split('T')[0] + 'T00:00:00';
+  const today =
+    new Date().toISOString().split('T')[0] +
+    'T00:00:00';
+
   const showings = [];
 
-  await Promise.all(nearbyCinemas.map(async cinema => {
-    try {
-      const url = `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinema.id}/films?showingDate=${today}&minEmbargoLevel=3&includesSession=true`;
- 
-const response =
-  await fetchTheSpace(url);
+  await Promise.all(
+    nearbyCinemas.map(async cinema => {
+      try {
+        const url =
+          `https://www.thespacecinema.it/api/microservice/showings/cinemas/${cinema.id}/films` +
+          `?showingDate=${encodeURIComponent(today)}` +
+          `&minEmbargoLevel=3` +
+          `&includesSession=true`;
 
-const data =
-  extractFilms(response);
+        const response =
+          await fetchTheSpace(url);
 
-console.log(
-  '🎞 CHECK FILM:',
-  cinema.name,
-  'films:',
-  data.length
-);
+        const data =
+          extractFilms(response);
 
-const match = data.find((f) =>
-  titlesMatch(
-    f?.filmTitle ??
-    f?.title ??
-    f?.name ??
-    '',
-    title
-  )
-);
+        console.log(
+          '🎞 CHECK FILM:',
+          cinema.name,
+          'films:',
+          data.length
+        );
 
-if (!match) return;
+        const match = data.find(f =>
+          titlesMatch(
+            f?.filmTitle ??
+            f?.title ??
+            f?.name ??
+            '',
+            title
+          )
+        );
 
-const sessions =
-  parseSessions(match)
-    .map((s) => s.time)
-    .filter(Boolean)
-    .slice(0, 5);
+        if (!match) return;
 
-showings.push({
-  cinema: cinema.name,
-  cinemaId: cinema.id,
-  distanceKm:
-    Math.round(
-      cinema.distanceKm * 10
-    ) / 10,
-  sessions,
-  bookingUrl:
-    `https://www.thespacecinema.it/cinema/${cinema.slug}/acquisto-biglietti`,
+        const sessions =
+          parseSessions(match)
+            .map(s => s.time)
+            .filter(Boolean)
+            .slice(0, 5);
+
+        showings.push({
+          cinema: cinema.name,
+          cinemaId: cinema.id,
+          distanceKm:
+            Math.round(
+              cinema.distanceKm * 10
+            ) / 10,
+          sessions,
+          bookingUrl:
+            `https://www.thespacecinema.it/cinema/${cinema.slug}/acquisto-biglietti`,
+        });
+
+      } catch (err) {
+        console.error(
+          `❌ CHECK FILM ${cinema.name}:`,
+          err?.message || err
+        );
+      }
+    })
+  );
+
+  showings.sort(
+    (a, b) => a.distanceKm - b.distanceKm
+  );
+
+  res.json({
+    inCinema: showings.length > 0,
+    showings,
+    filmTitle: title,
+  });
 });
  
-
-
-      const match = data.find(f => titlesMatch(f.filmTitle ?? f.title ?? f.name ?? '', title));
-      if (!match) return;
-
-      const sessions = parseSessions(match).map(s => s.time).filter(Boolean).slice(0, 5);
-
-      showings.push({
-        cinema:     cinema.name,
-        cinemaId:   cinema.id,
-        distanceKm: Math.round(cinema.distanceKm * 10) / 10,
-        sessions,
-        bookingUrl: `https://www.thespacecinema.it/cinema/${cinema.slug}/acquisto-biglietti`,
-      });
-    } catch { /* continua */ }
-  }));
-
-  showings.sort((a, b) => a.distanceKm - b.distanceKm);
-  res.json({ inCinema: showings.length > 0, showings, filmTitle: title });
-});
 
 // ─── START ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
